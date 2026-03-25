@@ -1,0 +1,13 @@
+*.a
+*.o
+output
+.idea
+.DS_Store
+sdk-demo
+cmake-build-debug
+cmake-build-release
+.vs
+CMakeSettings.json
+.vscode
+debug
+release
