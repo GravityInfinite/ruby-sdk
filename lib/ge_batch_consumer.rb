@@ -14,11 +14,15 @@ module GravityEngineData
 
     ##
     # Init batch consumer
-    def initialize(server_url, max_buffer_length = DEFAULT_LENGTH)
+    #   @param server_url: server url
+    #   @param max_buffer_length: flush event count each time
+    #   @param callback: global error callback, invoked when report failed; receives (err, client_id)
+    def initialize(server_url, max_buffer_length = DEFAULT_LENGTH, callback = nil)
       @server_url = server_url
       @compress = true
       @max_length = [max_buffer_length, MAX_LENGTH].min
       @buffers = []
+      @callback = callback
       GELog.info("GEBatchConsumer init success. ServerUrl: #{server_url}")
     end
 
@@ -71,26 +75,45 @@ module GravityEngineData
           compress_type = @compress ? 'gzip' : 'none'
           headers = { 'Gravity-Content-Compress' => compress_type }
           GELog.info("Send data to server.")
-          response_code, response_body = _request(@server_url, data, headers)
+          begin
+            response_code, response_body = _request(@server_url, data, headers)
+          rescue => e
+            report_error(ConnectionError.new("Could not connect to GE server, with error \"#{e.message}\"."), client_id)
+            raise
+          end
           GELog.info("Send data, response: #{response_body}")
 
           result = {}
           if response_code.to_i == 200
             begin
               result = JSON.parse(response_body.to_s)
-            rescue JSON::JSONError
+            rescue JSON::JSONError => e
+              report_error(e, client_id)
               raise ServerError.new("Could not interpret GE server response: '#{response_body}'")
             end
           end
 
           if result['code'] != 0
-            raise ServerError.new("Could not write to GE, server responded with #{response_code} returning: '#{response_body}'")
+            e = ServerError.new("Could not write to GE, server responded with #{response_code} returning: '#{response_body}'")
+            report_error(e, client_id)
+            raise e
           end
         end
       end
     end
 
     private
+
+    ##
+    # Invoke the global error callback when report failed
+    def report_error(err, client_id)
+      return if @callback.nil?
+      begin
+        @callback.call(err, client_id)
+      rescue => e
+        GELog.error("error callback failed: #{e.message}")
+      end
+    end
 
     def _request(server_url, body_data, headers)
       uri = URI.parse(server_url)
